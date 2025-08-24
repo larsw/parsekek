@@ -82,12 +82,12 @@ val numberTok: Parser<Tok.Num> = Parser { inp ->
     val start = inp.index
 
     // Parse the number lexeme first to determine if it's an integer or decimal
-    when (val doubleResult = double.parse(inp)) {
+    when (val doubleResult = bigDecimal.parse(inp)) {
         is ParseResult.Ok -> {
             val lexeme = inp.text.substring(inp.index, doubleResult.next.index)
             val value = if (lexeme.contains('.') || lexeme.contains('e') || lexeme.contains('E')) {
                 // It's a decimal number
-                BigDecimal.valueOf(doubleResult.value)
+                doubleResult.value
             } else {
                 // It's an integer, convert to BigDecimal without decimal point
                 BigDecimal.valueOf(doubleResult.value.toLong())

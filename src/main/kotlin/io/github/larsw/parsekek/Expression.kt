@@ -1,11 +1,18 @@
 package io.github.larsw.parsekek
 
+import java.math.BigDecimal
+
 /**
  * Sealed interface representing arithmetic expressions.
  */
 sealed interface Expr {
     /** Numeric literal expression */
-    data class Num(val value: Double) : Expr
+    data class Num(val value: BigDecimal) : Expr {
+        companion object {
+            fun of(value: Double) = Num(value.toBigDecimal())
+            fun of(value: Int) = Num(value.toBigDecimal())
+        }
+    }
 
     /** Unary negation expression */
     data class Neg(val expr: Expr) : Expr
@@ -29,7 +36,7 @@ sealed interface Expr {
  * @param e The expression to evaluate
  * @return The numeric result of the expression
  */
-fun eval(e: Expr): Double = when (e) {
+fun eval(e: Expr): BigDecimal = when (e) {
     is Expr.Num -> e.value
     is Expr.Neg -> -eval(e.expr)
     is Expr.Add -> eval(e.l) + eval(e.r)
@@ -46,7 +53,7 @@ private val star   = token(char('*'))
 private val slash  = token(char('/'))
 
 private val numberExpr: Parser<Expr> =
-    token(double or int.map { it.toDouble() }).map { Expr.Num(it) }
+    token(bigDecimal or int.map { it.toBigDecimal() }).map { Expr.Num(it) }
 
 private val atom: Parser<Expr> =
     numberExpr or between(lparen, rparen, lazyParser { expr })

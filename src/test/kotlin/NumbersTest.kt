@@ -45,54 +45,54 @@ class NumbersTest : FunSpec({
     }
 
     test("double should parse floating point numbers") {
-        val simple = double.parse(Input("123.456", 0))
+        val simple = bigDecimal.parse(Input("123.456", 0))
         simple.shouldBeInstanceOf<ParseResult.Ok<Double>>()
         simple.value shouldBe 123.456
 
-        val noIntPart = double.parse(Input(".456", 0))
+        val noIntPart = bigDecimal.parse(Input(".456", 0))
         noIntPart.shouldBeInstanceOf<ParseResult.Ok<Double>>()
         noIntPart.value shouldBe 0.456
 
-        val noFracPart = double.parse(Input("123.", 0))
+        val noFracPart = bigDecimal.parse(Input("123.", 0))
         noFracPart.shouldBeInstanceOf<ParseResult.Ok<Double>>()
         noFracPart.value shouldBe 123.0
     }
 
     test("double should parse scientific notation") {
-        val withE = double.parse(Input("1.5e10", 0))
+        val withE = bigDecimal.parse(Input("1.5e10", 0))
         withE.shouldBeInstanceOf<ParseResult.Ok<Double>>()
         withE.value shouldBe 1.5e10
 
-        val withCapitalE = double.parse(Input("2.5E-3", 0))
+        val withCapitalE = bigDecimal.parse(Input("2.5E-3", 0))
         withCapitalE.shouldBeInstanceOf<ParseResult.Ok<Double>>()
         withCapitalE.value shouldBe 2.5E-3
 
-        val withPositiveExp = double.parse(Input("1e+5", 0))
+        val withPositiveExp = bigDecimal.parse(Input("1e+5", 0))
         withPositiveExp.shouldBeInstanceOf<ParseResult.Ok<Double>>()
         withPositiveExp.value shouldBe 1e+5
     }
 
     test("double should handle signed numbers") {
-        val negative = double.parse(Input("-123.456", 0))
+        val negative = bigDecimal.parse(Input("-123.456", 0))
         negative.shouldBeInstanceOf<ParseResult.Ok<Double>>()
         negative.value shouldBe -123.456
 
-        val positive = double.parse(Input("+123.456", 0))
+        val positive = bigDecimal.parse(Input("+123.456", 0))
         positive.shouldBeInstanceOf<ParseResult.Ok<Double>>()
         positive.value shouldBe 123.456
     }
 
     test("double should fail on invalid input") {
-        double.parse(Input("abc", 0)).shouldBeInstanceOf<ParseResult.Err>()
-        double.parse(Input(".", 0)).shouldBeInstanceOf<ParseResult.Err>()
-        double.parse(Input("1e", 0)).shouldBeInstanceOf<ParseResult.Err>()
-        double.parse(Input("1e+", 0)).shouldBeInstanceOf<ParseResult.Err>()
+        bigDecimal.parse(Input("abc", 0)).shouldBeInstanceOf<ParseResult.Err>()
+        bigDecimal.parse(Input(".", 0)).shouldBeInstanceOf<ParseResult.Err>()
+        bigDecimal.parse(Input("1e", 0)).shouldBeInstanceOf<ParseResult.Err>()
+        bigDecimal.parse(Input("1e+", 0)).shouldBeInstanceOf<ParseResult.Err>()
     }
 
     test("double property test with valid doubles") {
         checkAll(Arb.double(-1000.0..1000.0)) { num ->
             if (num.isFinite()) {
-                val result = double.parse(Input(num.toString(), 0))
+                val result = bigDecimal.parse(Input(num.toString(), 0))
                 result.shouldBeInstanceOf<ParseResult.Ok<Double>>()
                 result.value shouldBe num
             }

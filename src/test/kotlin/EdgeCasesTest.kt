@@ -4,6 +4,7 @@ import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import io.kotest.matchers.string.shouldContain
+import java.math.BigDecimal
 
 class EdgeCasesTest : FunSpec({
 
@@ -60,25 +61,25 @@ class EdgeCasesTest : FunSpec({
 
     test("double parser edge cases") {
         // Just a dot should fail
-        double.parse(Input(".", 0)).shouldBeInstanceOf<ParseResult.Err>()
+        bigDecimal.parse(Input(".", 0)).shouldBeInstanceOf<ParseResult.Err>()
 
         // Number with incomplete exponent should fail
-        double.parse(Input("1e", 0)).shouldBeInstanceOf<ParseResult.Err>()
-        double.parse(Input("1e+", 0)).shouldBeInstanceOf<ParseResult.Err>()
-        double.parse(Input("1e-", 0)).shouldBeInstanceOf<ParseResult.Err>()
+        bigDecimal.parse(Input("1e", 0)).shouldBeInstanceOf<ParseResult.Err>()
+        bigDecimal.parse(Input("1e+", 0)).shouldBeInstanceOf<ParseResult.Err>()
+        bigDecimal.parse(Input("1e-", 0)).shouldBeInstanceOf<ParseResult.Err>()
 
         // Valid edge cases
-        val justFrac = double.parse(Input(".5", 0))
-        justFrac.shouldBeInstanceOf<ParseResult.Ok<Double>>()
-        justFrac.value shouldBe 0.5
+        val justFrac = bigDecimal.parse(Input(".5", 0))
+        justFrac.shouldBeInstanceOf<ParseResult.Ok<BigDecimal>>()
+        justFrac.value shouldBe 0.5.toBigDecimal()
 
-        val justInt = double.parse(Input("42.", 0))
-        justInt.shouldBeInstanceOf<ParseResult.Ok<Double>>()
-        justInt.value shouldBe 42.0
+        val justInt = bigDecimal.parse(Input("42.", 0))
+        justInt.shouldBeInstanceOf<ParseResult.Ok<BigDecimal>>()
+        justInt.value shouldBe 42.toBigDecimal()
 
-        val scientificInt = double.parse(Input("1e5", 0))
-        scientificInt.shouldBeInstanceOf<ParseResult.Ok<Double>>()
-        scientificInt.value shouldBe 100000.0
+        val scientificInt = bigDecimal.parse(Input("1e5", 0))
+        scientificInt.shouldBeInstanceOf<ParseResult.Ok<BigDecimal>>()
+        scientificInt.value shouldBe 100000.toBigDecimal()
     }
 
     test("sign parser coverage") {

@@ -10,12 +10,12 @@ import io.kotest.property.checkAll
 class ExpressionTest : FunSpec({
 
     test("Expr evaluation should work correctly") {
-        eval(Expr.Num(5.0)) shouldBe 5.0
-        eval(Expr.Neg(Expr.Num(3.0))) shouldBe -3.0
-        eval(Expr.Add(Expr.Num(2.0), Expr.Num(3.0))) shouldBe 5.0
-        eval(Expr.Sub(Expr.Num(5.0), Expr.Num(2.0))) shouldBe 3.0
-        eval(Expr.Mul(Expr.Num(3.0), Expr.Num(4.0))) shouldBe 12.0
-        eval(Expr.Div(Expr.Num(8.0), Expr.Num(2.0))) shouldBe 4.0
+        eval(Expr.Num.of(5.0)) shouldBe 5.0
+        eval(Expr.Neg(Expr.Num.of(3.0))) shouldBe -3.0
+        eval(Expr.Add(Expr.Num.of(2.0), Expr.Num.of(3.0))) shouldBe 5.0
+        eval(Expr.Sub(Expr.Num.of(5.0), Expr.Num.of(2.0))) shouldBe 3.0
+        eval(Expr.Mul(Expr.Num.of(3.0), Expr.Num.of(4.0))) shouldBe 12.0
+        eval(Expr.Div(Expr.Num.of(8.0), Expr.Num.of(2.0))) shouldBe 4.0
     }
 
     test("expression parser should parse simple numbers") {
@@ -79,15 +79,15 @@ class ExpressionTest : FunSpec({
     test("expression parser should handle parentheses") {
         val result1 = expression.parse(Input("(2 + 3) * 4", 0))
         result1.shouldBeInstanceOf<ParseResult.Ok<Expr>>()
-        eval(result1.value) shouldBe 20.0 // (2 + 3) * 4
+        eval(result1.value) shouldBe 20.toBigDecimal() // (2 + 3) * 4
 
         val result2 = expression.parse(Input("2 * (3 + 4)", 0))
         result2.shouldBeInstanceOf<ParseResult.Ok<Expr>>()
-        eval(result2.value) shouldBe 14.0 // 2 * (3 + 4)
+        eval(result2.value) shouldBe 14.toBigDecimal() // 2 * (3 + 4)
 
         val nested = expression.parse(Input("((2 + 3) * 4) - 1", 0))
         nested.shouldBeInstanceOf<ParseResult.Ok<Expr>>()
-        eval(nested.value) shouldBe 19.0 // ((2 + 3) * 4) - 1
+        eval(nested.value) shouldBe 19.toBigDecimal() // ((2 + 3) * 4) - 1
     }
 
     test("expression parser should handle unary minus") {

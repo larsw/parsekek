@@ -172,7 +172,7 @@ fun jsonString(): Parser<String> =
     noneOf("\"").many().map { it.joinToString("") } skipR 
     char('"')
 
-fun jsonNumber(): Parser<Double> = token(double)
+fun jsonNumber(): Parser<java.math.BigDecimal> = token(double)
 
 fun jsonBool(): Parser<Boolean> = 
     (keyword("true").map { true } or keyword("false").map { false })

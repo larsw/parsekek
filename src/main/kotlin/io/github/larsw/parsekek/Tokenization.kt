@@ -2,130 +2,54 @@ package io.github.larsw.parsekek
 
 import java.math.BigDecimal
 
-/** Represents a source span with start and end positions */
-data class Span(val start: Int, val end: Int) // [start, end)
+/** A half-open range `[start, end)` of character indices in the source. */
+data class Span(val start: Int, val end: Int)
 
 /**
- * Sealed interface for tokens with position information.
+ * A token produced by [tokenize]. Its [span] covers the token's own text, without the
+ * whitespace around it. Parse a list of tokens with a [TokenParser], built from [Tokens] and
+ * the usual combinators.
  */
-sealed interface Tok {
+sealed interface Token {
     /** The source span this token covers */
     val span: Span
 
     /** Identifier token */
-    data class Ident(val name: String, override val span: Span) : Tok
+    data class Identifier(val name: String, override val span: Span) : Token
 
-    /** Numeric literal token */
-    data class Num(val value: BigDecimal, override val span: Span) : Tok
+    /** Numeric literal token. Literals are unsigned; a '-' before one is a [Symbol]. */
+    data class Number(val value: BigDecimal, override val span: Span) : Token
 
     /** Keyword token */
-    data class Kw(val kw: String, override val span: Span) : Tok
+    data class Keyword(val text: String, override val span: Span) : Token
 
     /** Symbol/operator token */
-    data class Sym(val sym: String, override val span: Span) : Tok
+    data class Symbol(val text: String, override val span: Span) : Token
 }
 
-private fun <A> spanned(p: Parser<A>): Parser<Pair<A, Span>> = Parser { inp ->
-    val start = inp.index
-    when (val r = p.parse(inp)) {
-        is ParseResult.Ok  -> ParseResult.Ok(r.value to Span(start, r.next.index), r.next)
+private fun <A, T> Parser<A>.withSpan(build: (A, Span) -> T): Parser<T> = Parser { inp ->
+    when (val r = this.parse(inp)) {
+        is ParseResult.Ok  -> ParseResult.Ok(build(r.value, Span(inp.index, r.next.index)), r.next, r.hint)
         is ParseResult.Err -> r
     }
 }
 
-/**
- * Creates a parser that matches any of the given symbol strings, choosing the longest match.
- *
- * @param syms Variable number of symbol strings to match
- * @return Parser that produces a symbol token
- */
-fun symbols(vararg syms: String): Parser<Tok.Sym> = Parser { inp ->
-    // Try all symbols and find the longest successful match
-    var bestMatch: ParseResult.Ok<Tok.Sym>? = null
-    var longestLength = 0
-
-    for (sym in syms) {
-        val parser = spanned(string(sym)).map { (s, sp) -> Tok.Sym(s, sp) }
-        when (val result = parser.parse(inp)) {
-            is ParseResult.Ok -> {
-                if (sym.length > longestLength) {
-                    bestMatch = result
-                    longestLength = sym.length
-                }
-            }
-            is ParseResult.Err -> {
-                // Continue trying other symbols
-            }
-        }
-    }
-
-    bestMatch?.let { match ->
-        // Apply lexeme (whitespace trimming) to the result
-        spaces.parse(match.next).let { wsResult ->
-            when (wsResult) {
-                is ParseResult.Ok -> ParseResult.Ok(match.value, wsResult.next)
-                is ParseResult.Err -> match // If whitespace parsing fails, just return the match
-            }
-        }
-    } ?: ParseResult.Err(
-        ParseError.expected(inp.index, *syms.map { "\"$it\"" }.toTypedArray()),
-        consumed = false
-    )
-}
-
-/** Parser that matches identifier tokens with position information */
-val identTok: Parser<Tok.Ident> =
-    spanned(identifier).map { (name, sp) -> Tok.Ident(name, sp) }
-
-/** Parser that matches numeric tokens with position information */
-val numberTok: Parser<Tok.Num> = Parser { inp ->
-    val start = inp.index
-
-    // Parse the number lexeme first to determine if it's an integer or decimal
-    when (val doubleResult = bigDecimal.parse(inp)) {
-        is ParseResult.Ok -> {
-            val lexeme = inp.text.substring(inp.index, doubleResult.next.index)
-            val value = if (lexeme.contains('.') || lexeme.contains('e') || lexeme.contains('E')) {
-                // It's a decimal number
-                doubleResult.value
-            } else {
-                // It's an integer, convert to BigDecimal without decimal point
-                BigDecimal.valueOf(doubleResult.value.toLong())
-            }
-
-            // Apply lexeme (whitespace trimming)
-            when (val lexemeResult = spaces.parse(doubleResult.next)) {
-                is ParseResult.Ok -> ParseResult.Ok(
-                    Tok.Num(value, Span(start, lexemeResult.next.index)),
-                    lexemeResult.next
-                )
-                is ParseResult.Err -> ParseResult.Ok(
-                    Tok.Num(value, Span(start, doubleResult.next.index)),
-                    doubleResult.next
-                )
-            }
-        }
-        is ParseResult.Err -> doubleResult
+// Matches the longest of the given symbols at the current position.
+private fun longestSymbol(symbols: Set<String>): Parser<String> {
+    val longestFirst = symbols.sortedByDescending { it.length }
+    return Parser { inp ->
+        val match = longestFirst.firstOrNull { inp.startsWith(it) }
+        if (match != null) ParseResult.Ok(match, inp.advance(match.length))
+        else ParseResult.Err(ParseError.expected(inp.index, "symbol"), consumed = false)
     }
 }
-
-/**
- * Creates a parser that matches keyword tokens from the given strings.
- *
- * @param kws Variable number of keyword strings to match
- * @return Parser that produces keyword tokens
- */
-fun keywordTok(vararg kws: String): Parser<Tok.Kw> {
-    val alts = kws.map { kw ->
-        spanned(keyword(kw)).map { (_, sp) -> Tok.Kw(kw, sp) }
-    }
-    return alts.reduce { acc, p -> acc or p }
-}
-
-private fun <T : Tok> upcast(p: Parser<T>): Parser<Tok> = p.map { it as Tok }
 
 /**
  * Creates a tokenizer for the entire input with given keywords and symbols.
+ *
+ * Keywords take priority over identifiers but only match whole words ("iffy" is an identifier
+ * even when "if" is a keyword). Symbols are matched longest first, so with "=" and "==" the
+ * input "==" is one symbol. Whitespace between tokens is skipped.
  *
  * @param keywords Set of keyword strings to recognize
  * @param symbols Set of symbol strings to recognize
@@ -134,17 +58,48 @@ private fun <T : Tok> upcast(p: Parser<T>): Parser<Tok> = p.map { it as Tok }
 fun tokenize(
     keywords: Set<String> = emptySet(),
     symbols: Set<String> = emptySet()
-): Parser<List<Tok>> {
-    val kw =
-        if (keywords.isEmpty()) fail<Tok.Kw>("keywords")
-        else keywordTok(*keywords.toTypedArray())
+): Parser<List<Token>> {
+    val alternatives = buildList<Parser<Token>> {
+        if (keywords.isNotEmpty()) {
+            add(choice(*keywords.map(::keyword).toTypedArray()).withSpan(Token::Keyword))
+        }
+        add(identifier.withSpan(Token::Identifier))
+        add(unsignedBigDecimal.withSpan(Token::Number))
+        if (symbols.isNotEmpty()) add(longestSymbol(symbols).withSpan(Token::Symbol))
+    }
+    val token = choice(*alternatives.toTypedArray()).label("token")
+    return spaces skipL token.lexeme().many() skipR eof
+}
 
-    val sym =
-        if (symbols.isEmpty()) fail<Tok.Sym>("symbols")
-        else symbols(*symbols.toTypedArray())
+/**
+ * Parsers that match one token each, for building a [TokenParser]. Run it with
+ * `runParser(parser, tokens)`.
+ *
+ * ```
+ * val sum: TokenParser<BigDecimal> =
+ *     chainl1(Tokens.number, Tokens.symbol("+").map { { a: BigDecimal, b: BigDecimal -> a + b } })
+ * ```
+ */
+object Tokens {
+    /** Matches an identifier token and produces its name. */
+    val identifier: TokenParser<String> = token("identifier") { (it as? Token.Identifier)?.name }
 
-    val one: Parser<Tok> =
-        upcast(kw) or upcast(identTok) or upcast(numberTok) or upcast(sym)
-    val gap = spaces
-    return gap.skipL(one).many().skipR(gap).skipR(eof)
+    /** Matches a number token and produces its value. */
+    val number: TokenParser<BigDecimal> = token("number") { (it as? Token.Number)?.value }
+
+    /** Matches the keyword [text]. */
+    fun keyword(text: String): TokenParser<String> =
+        token("\"$text\"") { (it as? Token.Keyword)?.text?.takeIf { kw -> kw == text } }
+
+    /** Matches the symbol [text]. */
+    fun symbol(text: String): TokenParser<String> =
+        token("\"$text\"") { (it as? Token.Symbol)?.text?.takeIf { sym -> sym == text } }
+}
+
+// How a token is shown in error messages; matches the names Tokens uses for expectations.
+internal fun Token.describe(): String = when (this) {
+    is Token.Identifier -> "identifier \"$name\""
+    is Token.Number -> "number ${value.toPlainString()}"
+    is Token.Keyword -> "\"$text\""
+    is Token.Symbol -> "\"$text\""
 }

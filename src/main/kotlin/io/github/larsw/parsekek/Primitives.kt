@@ -8,12 +8,27 @@ package io.github.larsw.parsekek
  * @return Parser that matches satisfying characters
  */
 fun satisfy(name: String, pred: (Char) -> Boolean): Parser<Char> = Parser { inp ->
-    val c = inp.peek()
-    when {
-        c == null -> ParseResult.Err(ParseError.expected(inp.index, name), consumed = false)
-        pred(c)   -> ParseResult.Ok(c, inp.advance(1))
-        else      -> ParseResult.Err(ParseError.expected(inp.index, name), consumed = false)
+    val chars = inp.chars
+    if (chars.has(inp.index)) {
+        val c = chars.charAt(inp.index)
+        if (pred(c)) return@Parser ParseResult.Ok(c, inp.advance(1))
     }
+    ParseResult.Err(ParseError.expected(inp.index, name), consumed = false)
+}
+
+/**
+ * Creates a parser that matches one element of any input type, the counterpart of [satisfy]
+ * for parsers that don't read text. [match] returns the value to produce, or null if the
+ * element doesn't match: `token("number") { (it as? Token.Number)?.value }`.
+ *
+ * @param expected Description for error messages
+ * @param match Function from an element to the parsed value, or null
+ * @return Parser that matches one element
+ */
+fun <T : Any, A : Any> token(expected: String, match: (T) -> A?): GenericParser<T, A> = GenericParser { inp ->
+    val value = inp.peek()?.let(match)
+    if (value != null) ParseResult.Ok(value, inp.advance(1))
+    else ParseResult.Err(ParseError.expected(inp.index, expected), consumed = false)
 }
 
 /**
@@ -22,7 +37,7 @@ fun satisfy(name: String, pred: (Char) -> Boolean): Parser<Char> = Parser { inp 
  * @param ch The character to match
  * @return Parser that matches the specified character
  */
-fun char(ch: Char): Parser<Char> = satisfy("'$ch'") { it == ch }
+fun char(ch: Char): Parser<Char> = satisfy("'${escape(ch.toString())}'") { it == ch }
 
 /**
  * Creates a parser that matches any character from the given string.
@@ -31,7 +46,7 @@ fun char(ch: Char): Parser<Char> = satisfy("'$ch'") { it == ch }
  * @return Parser that matches any of the specified characters
  */
 fun oneOf(chars: String): Parser<Char> =
-    satisfy("one of [$chars]") { it in chars }
+    satisfy("one of [${escape(chars)}]") { it in chars }
 
 /**
  * Creates a parser that matches any character not in the given string.
@@ -40,26 +55,18 @@ fun oneOf(chars: String): Parser<Char> =
  * @return Parser that matches characters not in the specified set
  */
 fun noneOf(chars: String): Parser<Char> =
-    satisfy("none of [$chars]") { it !in chars }
+    satisfy("none of [${escape(chars)}]") { it !in chars }
 
 /**
- * Creates a parser that matches a specific string literal.
+ * Creates a parser that matches a specific string literal. It consumes nothing unless the whole
+ * literal matches, so `string("let") or string("lambda")` works without [attempt].
  *
  * @param lit The string literal to match
  * @return Parser that matches the exact string
  */
 fun string(lit: String): Parser<String> = Parser { inp ->
-    var i = 0
-    var cur = inp
-    while (i < lit.length) {
-        val c = cur.peek()
-        if (c == null || c != lit[i]) {
-            return@Parser ParseResult.Err(ParseError.expected(cur.index, "\"$lit\""), consumed = i > 0)
-        }
-        cur = cur.advance(1)
-        i += 1
-    }
-    ParseResult.Ok(lit, cur)
+    if (inp.startsWith(lit)) ParseResult.Ok(lit, inp.advance(lit.length))
+    else ParseResult.Err(ParseError.expected(inp.index, "\"${escape(lit)}\""), consumed = false)
 }
 
 /** Parser that matches any single character */
@@ -75,13 +82,27 @@ val letter: Parser<Char> = satisfy("letter") { it.isLetter() }
 val whitespace: Parser<Char> = satisfy("whitespace") { it.isWhitespace() }
 
 /** Parser that matches zero or more whitespace characters */
-val spaces: Parser<String> = whitespace.many().map { it.joinToString("") }
+val spaces: Parser<String> = Parser { inp ->
+    val chars = inp.chars
+    var end = inp.index
+    while (chars.has(end) && chars.charAt(end).isWhitespace()) end += 1
+    ParseResult.Ok(chars.slice(inp.index, end), inp.advance(end - inp.index))
+}
 
 /** Parser that matches one or more whitespace characters */
-val spaces1: Parser<String> = whitespace.many1().map { it.joinToString("") }
+val spaces1: Parser<String> = (whitespace then spaces).map { (first, rest) -> "$first$rest" }
 
 /** Parser that succeeds only at end of file */
-val eof: Parser<Unit> = Parser { inp ->
-    if (inp.isEof) ParseResult.Ok(Unit, inp)
-    else ParseResult.Err(ParseError.expected(inp.index, "EOF"), consumed = false)
+val eof: Parser<Unit> = endOfInput()
+
+// Shows line breaks and tabs in error messages as escapes rather than as themselves.
+internal fun escape(text: String): String = buildString {
+    for (c in text) {
+        when (c) {
+            '\n' -> append("\\n")
+            '\r' -> append("\\r")
+            '\t' -> append("\\t")
+            else -> append(c)
+        }
+    }
 }

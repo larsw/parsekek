@@ -1,100 +1,115 @@
 package io.github.larsw.parsekek
 
+import io.kotest.assertions.arrow.core.shouldBeLeft
+import io.kotest.assertions.arrow.core.shouldBeRight
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import io.kotest.property.Arb
 import io.kotest.property.arbitrary.*
 import io.kotest.property.checkAll
+import java.math.BigDecimal
+import java.math.BigInteger
 
 class NumbersTest : FunSpec({
 
     test("unsignedInt should parse positive integers") {
         val result = unsignedInt.parse(Input("123abc", 0))
 
-        result.shouldBeInstanceOf<ParseResult.Ok<Long>>()
-        result.value shouldBe 123L
+        result.shouldBeInstanceOf<ParseResult.Ok<Char, Int>>()
+        result.value shouldBe 123
         result.next.index shouldBe 3
     }
 
-    test("unsignedInt should fail on non-digits") {
-        val result = unsignedInt.parse(Input("abc", 0))
-        result.shouldBeInstanceOf<ParseResult.Err>()
+    test("unsignedInt should fail on non-digits and signs") {
+        unsignedInt.parse(Input("abc", 0)).shouldBeInstanceOf<ParseResult.Err>()
+        unsignedInt.parse(Input("-1", 0)).shouldBeInstanceOf<ParseResult.Err>().consumed shouldBe false
     }
 
     test("int should parse signed integers") {
-        val positive = int.parse(Input("123", 0))
-        positive.shouldBeInstanceOf<ParseResult.Ok<Long>>()
-        positive.value shouldBe 123L
-
-        val negative = int.parse(Input("-456", 0))
-        negative.shouldBeInstanceOf<ParseResult.Ok<Long>>()
-        negative.value shouldBe -456L
-
-        val explicitPositive = int.parse(Input("+789", 0))
-        explicitPositive.shouldBeInstanceOf<ParseResult.Ok<Long>>()
-        explicitPositive.value shouldBe 789L
+        runParser(int, "123") shouldBeRight 123
+        runParser(int, "-456") shouldBeRight -456
+        runParser(int, "+789") shouldBeRight 789
+        runParser(int, "-2147483648") shouldBeRight Int.MIN_VALUE
     }
 
-    test("int property test with safe range") {
-        checkAll(Arb.long(-1000000L..1000000L)) { num ->
-            val result = int.parse(Input(num.toString(), 0))
-            result.shouldBeInstanceOf<ParseResult.Ok<Long>>()
-            result.value shouldBe num
+    test("int property test") {
+        checkAll(Arb.int()) { num ->
+            runParser(int, num.toString()) shouldBeRight num
         }
     }
 
-    test("double should parse floating point numbers") {
-        val simple = bigDecimal.parse(Input("123.456", 0))
-        simple.shouldBeInstanceOf<ParseResult.Ok<Double>>()
-        simple.value shouldBe 123.456
-
-        val noIntPart = bigDecimal.parse(Input(".456", 0))
-        noIntPart.shouldBeInstanceOf<ParseResult.Ok<Double>>()
-        noIntPart.value shouldBe 0.456
-
-        val noFracPart = bigDecimal.parse(Input("123.", 0))
-        noFracPart.shouldBeInstanceOf<ParseResult.Ok<Double>>()
-        noFracPart.value shouldBe 123.0
+    test("int reports overflow as a parse error instead of wrapping or throwing") {
+        for (text in listOf("2147483648", "4294967295", "-2147483649", "99999999999")) {
+            val error = runParser(int, text).shouldBeLeft()
+            error.index shouldBe 0
+            error.message shouldBe "$text is out of range"
+        }
     }
 
-    test("double should parse scientific notation") {
-        val withE = bigDecimal.parse(Input("1.5e10", 0))
-        withE.shouldBeInstanceOf<ParseResult.Ok<Double>>()
-        withE.value shouldBe 1.5e10
+    test("a lone sign is not a number and consumes nothing") {
+        val result = int.parse(Input("-x", 0))
+        result.shouldBeInstanceOf<ParseResult.Err>()
+        result.consumed shouldBe false
 
-        val withCapitalE = bigDecimal.parse(Input("2.5E-3", 0))
-        withCapitalE.shouldBeInstanceOf<ParseResult.Ok<Double>>()
-        withCapitalE.value shouldBe 2.5E-3
-
-        val withPositiveExp = bigDecimal.parse(Input("1e+5", 0))
-        withPositiveExp.shouldBeInstanceOf<ParseResult.Ok<Double>>()
-        withPositiveExp.value shouldBe 1e+5
+        runParser(bigDecimal or string("-").map { BigDecimal.ZERO }, "-") shouldBeRight BigDecimal.ZERO
     }
 
-    test("double should handle signed numbers") {
-        val negative = bigDecimal.parse(Input("-123.456", 0))
-        negative.shouldBeInstanceOf<ParseResult.Ok<Double>>()
-        negative.value shouldBe -123.456
-
-        val positive = bigDecimal.parse(Input("+123.456", 0))
-        positive.shouldBeInstanceOf<ParseResult.Ok<Double>>()
-        positive.value shouldBe 123.456
+    test("long and unsignedLong cover the Long range") {
+        runParser(long, Long.MIN_VALUE.toString()) shouldBeRight Long.MIN_VALUE
+        runParser(unsignedLong, Long.MAX_VALUE.toString()) shouldBeRight Long.MAX_VALUE
+        runParser(unsignedLong, "18446744073709551615").shouldBeLeft().message shouldBe
+            "18446744073709551615 is out of range"
     }
 
-    test("double should fail on invalid input") {
+    test("bigInteger has no range limit") {
+        runParser(bigInteger, "-123456789012345678901234567890") shouldBeRight
+            BigInteger("-123456789012345678901234567890")
+        runParser(unsignedBigInteger, "123456789012345678901234567890") shouldBeRight
+            BigInteger("123456789012345678901234567890")
+    }
+
+    test("bigDecimal should parse decimal numbers exactly") {
+        runParser(bigDecimal, "123.456") shouldBeRight BigDecimal("123.456")
+        runParser(bigDecimal, ".456") shouldBeRight BigDecimal("0.456")
+        runParser(bigDecimal, "-123.456") shouldBeRight BigDecimal("-123.456")
+        runParser(bigDecimal, "+123.456") shouldBeRight BigDecimal("123.456")
+    }
+
+    test("bigDecimal should parse scientific notation") {
+        runParser(bigDecimal, "1.5e10") shouldBeRight BigDecimal("1.5e10")
+        runParser(bigDecimal, "2.5E-3") shouldBeRight BigDecimal("2.5E-3")
+        runParser(bigDecimal, "1e+5") shouldBeRight BigDecimal("1e+5")
+    }
+
+    test("a '.' or exponent without digits is not part of the number") {
+        for ((text, end) in listOf("123." to 3, "1e" to 1, "1e+" to 1, "2em" to 1)) {
+            val result = bigDecimal.parse(Input(text, 0))
+            result.shouldBeInstanceOf<ParseResult.Ok<Char, BigDecimal>>()
+            result.next.index shouldBe end
+        }
+    }
+
+    test("bigDecimal should fail on input without digits") {
         bigDecimal.parse(Input("abc", 0)).shouldBeInstanceOf<ParseResult.Err>()
-        bigDecimal.parse(Input(".", 0)).shouldBeInstanceOf<ParseResult.Err>()
-        bigDecimal.parse(Input("1e", 0)).shouldBeInstanceOf<ParseResult.Err>()
-        bigDecimal.parse(Input("1e+", 0)).shouldBeInstanceOf<ParseResult.Err>()
+        bigDecimal.parse(Input(".", 0)).shouldBeInstanceOf<ParseResult.Err>().consumed shouldBe false
+        bigDecimal.parse(Input("-", 0)).shouldBeInstanceOf<ParseResult.Err>().consumed shouldBe false
+    }
+
+    test("double should parse floating point numbers") {
+        runParser(double, "123.456") shouldBeRight 123.456
+        runParser(double, "-1.5e10") shouldBeRight -1.5e10
+        runParser(unsignedDouble, "2.5E-3") shouldBeRight 2.5E-3
+    }
+
+    test("double reports values too large for a Double instead of returning Infinity") {
+        runParser(double, "1e400").shouldBeLeft().message shouldBe "1e400 is out of range"
     }
 
     test("double property test with valid doubles") {
         checkAll(Arb.double(-1000.0..1000.0)) { num ->
             if (num.isFinite()) {
-                val result = bigDecimal.parse(Input(num.toString(), 0))
-                result.shouldBeInstanceOf<ParseResult.Ok<Double>>()
-                result.value shouldBe num
+                runParser(double, num.toString()) shouldBeRight num
             }
         }
     }

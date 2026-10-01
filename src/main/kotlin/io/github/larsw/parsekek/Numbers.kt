@@ -3,79 +3,99 @@ package io.github.larsw.parsekek
 import java.math.BigDecimal
 import java.math.BigInteger
 
+// Number parsers come in pairs: the plain one accepts an optional leading '+' or '-', the
+// unsigned one doesn't. All of them consume nothing when no digits follow, and fail (after
+// consuming the literal) when the value doesn't fit the result type.
+
 /** Parser that matches an optional sign (+/-), defaulting to positive */
-val sign: Parser<Int> =
-    (char('+').map { 1 } or char('-').map { -1 } or pure(1))
-
-/** Parser that matches an unsigned integer */
-val unsignedInt: Parser<UInt> =
-    digit.many1().map { it.joinToString("").toUInt() }
-
-/** Parser that matches a signed integer */
-val int: Parser<Int> =
-    sign.flatMap { s -> unsignedInt.map { it.toInt() * s } }
-
-val unsignedBigInteger: Parser<BigInteger> =
-    digit.many1().map { it.joinToString("").toBigInteger() }
-
-val bigInteger: Parser<BigInteger> =
-    sign.flatMap { s -> unsignedBigInteger.map { it * s.toBigInteger() } }
-
-val unsignedLong: Parser<ULong> =
-    digit.many1().map { it.joinToString("").toULong() }
-
-val long: Parser<Long> =
-    sign.flatMap { s -> unsignedLong.map { it.toLong() * s } }
-
-/** Parser that matches floating-point numbers with optional exponent notation */
-val bigDecimal: Parser<BigDecimal> = Parser { inp ->
-    val start = inp
-    var cur = inp
-    fun consumeDigits(): Boolean {
-        var consumedAny = false
-        while (true) {
-            val c = cur.peek() ?: break
-            if (c in '0'..'9') { cur = cur.advance(1); consumedAny = true } else break
-        }
-        return consumedAny
+val sign: Parser<Int> = Parser { inp ->
+    when (inp.peek()) {
+        '+' -> ParseResult.Ok(1, inp.advance(1))
+        '-' -> ParseResult.Ok(-1, inp.advance(1))
+        else -> ParseResult.Ok(1, inp)
     }
-
-    when (cur.peek()) {
-        '+', '-' -> cur = cur.advance(1)
-    }
-
-    val intPart = consumeDigits()
-    val dot = if (cur.peek() == '.') { cur = cur.advance(1); true } else false
-    val fracPart = if (dot) consumeDigits() else false
-
-    if (!intPart && !(dot && fracPart)) {
-        return@Parser ParseResult.Err(ParseError.expected(cur.index, "double"), consumed = cur.index > start.index)
-    }
-
-    val e = cur.peek()
-    if (e == 'e' || e == 'E') {
-        val afterE = cur.advance(1)
-        var tmp = afterE
-        val sgn = tmp.peek()
-        if (sgn == '+' || sgn == '-') tmp = tmp.advance(1)
-        var expDigits = false
-        while (true) {
-            val c = tmp.peek() ?: break
-            if (c in '0'..'9') { tmp = tmp.advance(1); expDigits = true } else break
-        }
-        if (!expDigits) {
-            return@Parser ParseResult.Err(ParseError.expected(tmp.index, "exponent digits"), consumed = true)
-        }
-        cur = tmp
-    }
-
-    val lexeme = inp.text.substring(inp.index, cur.index)
-    val value = lexeme.toBigDecimalOrNull()
-        ?: return@Parser ParseResult.Err(ParseError.expected(cur.index, "double"), consumed = true)
-    ParseResult.Ok(value, cur)
 }
 
-val double: Parser<Double> =
-    bigDecimal.map { it.toDouble() }
+/** Parser that matches a signed integer that fits in an Int */
+val int: Parser<Int> = number("integer", signed = true, decimal = false) { it.toIntOrNull() }
 
-val float = bigDecimal.map { it.toFloat() }
+/** Parser that matches an unsigned integer that fits in an Int */
+val unsignedInt: Parser<Int> = number("unsigned integer", signed = false, decimal = false) { it.toIntOrNull() }
+
+/** Parser that matches a signed integer that fits in a Long */
+val long: Parser<Long> = number("integer", signed = true, decimal = false) { it.toLongOrNull() }
+
+/** Parser that matches an unsigned integer that fits in a Long */
+val unsignedLong: Parser<Long> = number("unsigned integer", signed = false, decimal = false) { it.toLongOrNull() }
+
+/** Parser that matches a signed integer of any size */
+val bigInteger: Parser<BigInteger> = number("integer", signed = true, decimal = false) { it.toBigInteger() }
+
+/** Parser that matches an unsigned integer of any size */
+val unsignedBigInteger: Parser<BigInteger> =
+    number("unsigned integer", signed = false, decimal = false) { it.toBigInteger() }
+
+/**
+ * Parser that matches a signed decimal number: digits with an optional fraction (`1.5`, `.5`)
+ * and exponent (`1e10`, `2.5E-3`). A '.' or 'e' that isn't followed by digits is not part of
+ * the number, so "1." parses as 1 and leaves the '.'.
+ */
+val bigDecimal: Parser<BigDecimal> = number("number", signed = true, decimal = true) { it.toBigDecimal() }
+
+/** Like [bigDecimal], without a sign. */
+val unsignedBigDecimal: Parser<BigDecimal> =
+    number("unsigned number", signed = false, decimal = true) { it.toBigDecimal() }
+
+/** Like [bigDecimal], as a Double. Values too large for a Double are an error, not Infinity. */
+val double: Parser<Double> = number("number", signed = true, decimal = true) { it.toDouble().takeIf(Double::isFinite) }
+
+/** Like [double], without a sign. */
+val unsignedDouble: Parser<Double> =
+    number("unsigned number", signed = false, decimal = true) { it.toDouble().takeIf(Double::isFinite) }
+
+private fun <N : Any> number(name: String, signed: Boolean, decimal: Boolean, convert: (String) -> N?): Parser<N> =
+    Parser { inp ->
+        val chars = inp.chars
+        val end = scanNumber(chars, inp.index, signed, decimal)
+            ?: return@Parser ParseResult.Err(ParseError.expected(inp.index, name), consumed = false)
+        val literal = chars.slice(inp.index, end)
+        val value = convert(literal)
+            ?: return@Parser ParseResult.Err(
+                ParseError(inp.index, setOf(name), "$literal is out of range"),
+                consumed = true
+            )
+        ParseResult.Ok(value, inp.advance(end - inp.index))
+    }
+
+/** Returns the end index of the numeric literal starting at [start], or null if there is none. */
+private fun scanNumber(chars: CharSource, start: Int, signed: Boolean, decimal: Boolean): Int? {
+    fun isAt(i: Int, c: Char) = chars.has(i) && chars.charAt(i) == c
+    fun isDigit(i: Int) = chars.has(i) && chars.charAt(i) in '0'..'9'
+    fun skipDigits(from: Int): Int {
+        var i = from
+        while (isDigit(i)) i += 1
+        return i
+    }
+
+    var i = start
+    if (signed && (isAt(i, '+') || isAt(i, '-'))) i += 1
+    val intEnd = skipDigits(i)
+    val hasIntDigits = intEnd > i
+    i = intEnd
+    if (!decimal) return if (hasIntDigits) i else null
+
+    var hasFracDigits = false
+    if (isAt(i, '.') && isDigit(i + 1)) {
+        i = skipDigits(i + 1)
+        hasFracDigits = true
+    }
+    if (!hasIntDigits && !hasFracDigits) return null
+
+    if (isAt(i, 'e') || isAt(i, 'E')) {
+        var j = i + 1
+        if (isAt(j, '+') || isAt(j, '-')) j += 1
+        val expEnd = skipDigits(j)
+        if (expEnd > j) i = expEnd
+    }
+    return i
+}

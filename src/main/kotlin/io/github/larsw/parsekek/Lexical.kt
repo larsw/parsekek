@@ -3,10 +3,13 @@ package io.github.larsw.parsekek
 /**
  * Applies this parser and then skips trailing whitespace.
  *
+ * Parsers in this library never skip whitespace on their own. The usual pattern is to make every
+ * token a lexeme and skip leading whitespace once, at the start: `spaces skipL grammar`.
+ *
  * @param ws Parser for whitespace (defaults to spaces)
  * @return Parser that trims whitespace after parsing
  */
-fun <A> Parser<A>.lexeme(ws: Parser<*> = spaces): Parser<A> = this.skipR(ws)
+fun <A> Parser<A>.lexeme(ws: Parser<*> = spaces): Parser<A> = this skipR ws
 
 /**
  * Skips leading whitespace before applying this parser.
@@ -14,41 +17,35 @@ fun <A> Parser<A>.lexeme(ws: Parser<*> = spaces): Parser<A> = this.skipR(ws)
  * @param ws Parser for whitespace (defaults to spaces)
  * @return Parser that trims whitespace before parsing
  */
-fun <A> Parser<A>.trimLeft(ws: Parser<*> = spaces): Parser<A> = ws.skipL(this)
+fun <A> Parser<A>.trimLeft(ws: Parser<*> = spaces): Parser<A> = ws skipL this
 
-/**
- * Alias for lexeme - parses a token and skips trailing whitespace.
- *
- * @param p The parser to tokenize
- * @return Parser that skips whitespace after parsing
- */
-fun <A> token(p: Parser<A>): Parser<A> = p.lexeme(spaces)
+private fun isIdentifierStart(c: Char): Boolean = c.isLetter() || c == '_'
 
-private val underscore: Parser<Char> = char('_')
-private val identStartChar: Parser<Char> = letter or underscore
-private val identPartChar: Parser<Char> = letter or digit or underscore
+private fun isIdentifierPart(c: Char): Boolean = c.isLetter() || c in '0'..'9' || c == '_'
 
 /** Parser that matches a valid identifier (letter/underscore followed by letters/digits/underscores) */
-val identifier: Parser<String> = token(
-    identStartChar.flatMap { first ->
-        identPartChar.many().map { rest -> (listOf(first) + rest).joinToString("") }
+val identifier: Parser<String> = Parser { inp ->
+    val chars = inp.chars
+    val start = inp.index
+    if (!chars.has(start) || !isIdentifierStart(chars.charAt(start))) {
+        return@Parser ParseResult.Err(ParseError.expected(start, "identifier"), consumed = false)
     }
-)
+    var end = start + 1
+    while (chars.has(end) && isIdentifierPart(chars.charAt(end))) end += 1
+    ParseResult.Ok(chars.slice(start, end), inp.advance(end - start))
+}
 
 /**
- * Creates a parser that matches a specific keyword with word boundary checking.
+ * Creates a parser that matches a specific keyword with word boundary checking. Like [string],
+ * it consumes nothing when it fails, so `keyword("in") or keyword("int")` works.
  *
  * @param kw The keyword to match
- * @return Parser that matches the keyword only when followed by a word boundary
+ * @return Parser that matches the keyword only when it is not followed by a letter, digit or '_'
  */
-fun keyword(kw: String): Parser<String> = token { inp ->
-    when (val r = string(kw).parse(inp)) {
-        is ParseResult.Ok -> {
-            val next = r.next.peek()
-            val boundary = next == null || next.isWhitespace() || !(next.isLetterOrDigit() || next == '_')
-            if (boundary) ParseResult.Ok(kw, r.next)
-            else ParseResult.Err(ParseError.expected(r.next.index, "word boundary after \"$kw\""), consumed = false)
-        }
-        is ParseResult.Err -> r
-    }
+fun keyword(kw: String): Parser<String> = Parser { inp ->
+    val chars = inp.chars
+    val end = inp.index + kw.length
+    val matches = inp.startsWith(kw) && !(chars.has(end) && isIdentifierPart(chars.charAt(end)))
+    if (matches) ParseResult.Ok(kw, inp.advance(kw.length))
+    else ParseResult.Err(ParseError.expected(inp.index, "\"$kw\""), consumed = false)
 }

@@ -3,6 +3,8 @@ package io.github.larsw.parsekek
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
 import io.kotest.property.Arb
+import io.kotest.property.arbitrary.int
+import io.kotest.property.arbitrary.map
 import io.kotest.property.arbitrary.string
 import io.kotest.property.checkAll
 
@@ -11,7 +13,6 @@ class InputTest : FunSpec({
     test("Input should track position correctly") {
         val input = Input("hello", 0)
         input.index shouldBe 0
-        input.text shouldBe "hello"
         input.isEof shouldBe false
     }
 
@@ -30,33 +31,54 @@ class InputTest : FunSpec({
         val input = Input("hello", 2)
         val advanced = input.advance(2)
         advanced.index shouldBe 4
-        advanced.text shouldBe "hello"
+        advanced.peek() shouldBe 'o'
     }
 
-    test("Input.lineCol should compute correct line and column") {
-        val input = Input("line1\nline2\nline3", 8)
-        val (line, col) = input.lineCol()
-        line shouldBe 2
-        col shouldBe 3
+    test("Input.startsWith and textUntil read text for custom parsers") {
+        val input = Input("hello world", 6)
+        input.startsWith("world") shouldBe true
+        input.startsWith("worlds") shouldBe false
+        input.textUntil(input.advance(3)) shouldBe "wor"
     }
 
-    test("Input.lineCol with newlines property test") {
-        checkAll(Arb.string()) { text ->
-            val input = Input(text, 0)
-            val (line, col) = input.lineCol()
-            line shouldBe 1
-            col shouldBe 1
+    test("Inputs over equal text or lists are equal") {
+        Input("abc", 1) shouldBe Input("abc", 1)
+        Input(listOf(1, 2)) shouldBe Input(listOf(1, 2))
+    }
+
+    test("Input over a list reads its elements") {
+        val input = Input(listOf("a", "b"))
+        input.peek() shouldBe "a"
+        input.advance(2).isEof shouldBe true
+    }
+
+    test("Input.position should compute correct line and column") {
+        Input("line1\nline2\nline3", 8).position() shouldBe Position(2, 3)
+    }
+
+    test("Input.position on text without line breaks is line 1, column index + 1") {
+        checkAll(Arb.string(0..50).map { it.filterNot { c -> c == '\n' || c == '\r' } }, Arb.int(0..60)) { text, i ->
+            val index = minOf(i, text.length)
+            Input(text, index).position() shouldBe Position(1, index + 1)
         }
     }
 
-    test("Input.lineCol handles edge cases") {
-        // Empty string
-        Input("", 0).lineCol() shouldBe (1 to 1)
+    test("Input.position handles edge cases") {
+        Input("", 0).position() shouldBe Position(1, 1)
+        Input("\n", 1).position() shouldBe Position(2, 1)
+        Input("\n\n\n", 3).position() shouldBe Position(4, 1)
+    }
 
-        // Single newline
-        Input("\n", 1).lineCol() shouldBe (2 to 1)
+    test("Input.position treats \\r\\n and lone \\r as one line break") {
+        Input("ab\r\ncd", 4).position() shouldBe Position(2, 1)
+        Input("ab\r\ncd", 5).position() shouldBe Position(2, 2)
+        Input("a\rbc", 2).position() shouldBe Position(2, 1)
+    }
 
-        // Multiple newlines
-        Input("\n\n\n", 3).lineCol() shouldBe (4 to 1)
+    test("Input.currentLine returns the line at index without its terminator") {
+        Input("one\ntwo\r\nthree", 5).currentLine() shouldBe "two"
+        Input("one\ntwo\r\nthree", 10).currentLine() shouldBe "three"
+        Input("a\rbc", 3).currentLine() shouldBe "bc"
+        Input("abc\n", 4).currentLine() shouldBe ""
     }
 })

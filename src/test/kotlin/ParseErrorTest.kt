@@ -23,36 +23,56 @@ class ParseErrorTest : FunSpec({
         error.message shouldBe null
     }
 
+    test("ParseError.merge keeps the furthest error and joins expectations at the same index") {
+        val a = ParseError.expected(3, "digit")
+        val b = ParseError.expected(3, "letter")
+        val further = ParseError.expected(5, "end of input")
+
+        a.merge(b) shouldBe ParseError.expected(3, "digit", "letter")
+        a.merge(further) shouldBe further
+        further.merge(a) shouldBe further
+    }
+
     test("ParseError.pretty should format error message correctly") {
         val source = "hello\nworld\ntest"
         val error = ParseError(8, setOf("digit"), "expected number")
-        val pretty = error.pretty(source)
 
-        pretty shouldContain "line 2, column 3"
-        pretty shouldContain "world"
-        pretty shouldContain "expected: digit"
-        pretty shouldContain "message: expected number"
+        error.pretty(source) shouldBe """
+            Parse error at line 2, column 3 (index 8)
+            world
+              ^
+            expected: digit
+            found: 'r'
+            message: expected number
+        """.trimIndent()
     }
 
     test("ParseError.pretty with no expectations") {
-        val source = "test"
-        val error = ParseError(2, emptySet(), null)
-        val pretty = error.pretty(source)
+        val pretty = ParseError(2, emptySet(), null).pretty("test")
 
         pretty shouldContain "line 1, column 3"
         pretty shouldContain "test"
+        pretty.contains("expected:") shouldBe false
     }
 
     test("ParseError.pretty handles edge cases") {
-        // Error at start of input
-        val error1 = ParseError(0, setOf("start"), null)
-        val pretty1 = error1.pretty("hello")
-        pretty1 shouldContain "line 1, column 1"
+        ParseError(0, setOf("start"), null).pretty("hello") shouldContain "line 1, column 1"
 
-        // Error beyond input length
-        val error2 = ParseError(10, setOf("EOF"), null)
-        val pretty2 = error2.pretty("short")
-        pretty2 shouldContain "line 1, column 6"
+        val beyondEnd = ParseError(10, setOf("end of input"), null).pretty("short")
+        beyondEnd shouldContain "line 1, column 6"
+        beyondEnd shouldContain "found: end of input"
+    }
+
+    test("ParseError.pretty keeps tabs so the caret lines up") {
+        val pretty = ParseError(2, setOf("digit"), null).pretty("\t\tx")
+        pretty.lines()[2] shouldBe "\t\t^"
+    }
+
+    test("ParseError.pretty uses the same line breaks as Input.position") {
+        val pretty = ParseError(3, setOf("digit"), null).pretty("a\rbcd")
+        pretty.lines()[0] shouldBe "Parse error at line 2, column 2 (index 3)"
+        pretty.lines()[1] shouldBe "bcd"
+        pretty.lines()[2] shouldBe " ^"
     }
 
     test("ParseError.pretty property test") {
